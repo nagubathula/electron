@@ -2,31 +2,31 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Expose a secure API to the renderer process (your webpage)
 contextBridge.exposeInMainWorld('api', {
+  // --- Navigation ---
+  navigateToDashboard: () => ipcRenderer.send('navigate:toDashboard'),
+  navigateToLogin: () => ipcRenderer.send('navigate:toLogin'),
+
   // --- Supabase API (from Renderer to Main) ---
   login: (email, password) => ipcRenderer.invoke('supabase:login', email, password),
-  logout: () => ipcRenderer.invoke('supabase:logout'), // NEW: Logout function
   getPendingOrders: () => ipcRenderer.invoke('supabase:getPendingOrders'),
+  getSession: () => ipcRenderer.invoke('supabase:getSession'),
 
   // --- Printer API (from Renderer to Main) ---
   getPrinters: () => ipcRenderer.invoke('printer:getPrinters'),
   getSavedPrinterName: () => ipcRenderer.invoke('printer:getSavedName'),
-  savePrinterSetting: (config) => ipcRenderer.invoke('printer:saveSetting', config), 
-  silentPrintOrder: (orderHtmlContent, orderId) => ipcRenderer.invoke('printer:silentPrintOrder', orderHtmlContent, orderId),
-  getPdfSavePath: () => ipcRenderer.invoke('printer:getPdfSavePath'), 
-  selectDirectory: () => ipcRenderer.invoke('app:selectDirectory'), 
+  savePrinterSetting: (printerName) => ipcRenderer.invoke('printer:saveSetting', printerName),
+  
+  // --- UPDATED: This now sends `printData` (an array) instead of `orderHtmlContent` (a string) ---
+  silentPrintOrder: (printData, orderId) => ipcRenderer.invoke('printer:silentPrintOrder', printData, orderId),
 
   // --- Event listeners (from Main to Renderer) ---
   onNewOrder: (callback) => {
+    // Remove all previous listeners to avoid duplicates if dashboard is reloaded
     ipcRenderer.removeAllListeners('supabase:newOrder');
+    // Add the new listener
     ipcRenderer.on('supabase:newOrder', (event, order) => {
       callback(order);
     });
   },
-  // NEW: Listener for session restoration on startup
-  onSessionRestored: (callback) => {
-    ipcRenderer.removeAllListeners('supabase:sessionRestored');
-    ipcRenderer.on('supabase:sessionRestored', (event, user) => {
-      callback(user);
-    });
-  },
 });
+

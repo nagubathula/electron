@@ -2,13 +2,38 @@
 <html lang="en" class="h-full bg-gray-50">
 <head>
     <meta charset="UTF-8">
+    <!-- Updated CSP -->
     <meta http-equiv="Content-Security-Policy" content="script-src 'self' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline';">
     <title>Order Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Simple fade-in animation for new orders */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .new-order-fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        /* --- NEW: Style for disabled print button --- */
+        .print-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
 <body class="h-full">
 
-    <div id="login-view" class="flex min-h-full flex-col justify-center items-center px-6 py-12 lg:px-8">
+    <!-- LOGIN VIEW -->
+    <!-- This view is shown or hidden by renderer.js -->
+    <div id="login-view" class="flex min-h-full flex-col justify-center items-center px-6 py-12 lg:px-8" style="display: none;">
         <div class="sm:mx-auto sm:w-full sm:max-w-sm">
             <h2 class="mt-10 text-center text-2xl font-bold leading-9 tracking-tight text-gray-900">Manager Dashboard Login</h2>
         </div>
@@ -37,18 +62,17 @@
     </div>
 
 
+    <!-- DASHBOARD VIEW -->
+    <!-- This view is shown or hidden by renderer.js -->
     <div id="dashboard-view" class="hidden p-8">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">Pending Orders</h1>
             <div class="flex items-center space-x-4">
-                 <p id="user-info" class="text-sm font-medium text-gray-600 hidden"></p> <button id="printer-setup-button" class="px-3 py-1.5 text-sm font-semibold rounded-md bg-gray-200 text-gray-700 hover:bg-gray-300">
+                 <button id="printer-setup-button" class="px-3 py-1.5 text-sm font-semibold rounded-md bg-gray-200 text-gray-700 hover:bg-gray-300">
                     Printer Setup
                 </button>
-                <button id="logout-button" class="px-3 py-1.5 text-sm font-semibold rounded-md bg-red-500 text-white hover:bg-red-600">
-                    Logout
-                </button>
                 <div id="status-indicator" class="flex items-center space-x-2">
-                     <span class="relative flex h-3 w-3">
+                    <span class="relative flex h-3 w-3">
                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
                     </span>
@@ -58,29 +82,21 @@
         </div>
         <p id="printer-status" class="text-sm text-red-600 mb-4 font-medium"></p>
         <div id="orders-list" class="space-y-4">
-            </div>
+            <!-- Orders will be loaded here -->
+        </div>
     </div>
 
+    <!-- PRINTER SETUP MODAL -->
     <div id="printer-setup-modal" class="fixed inset-0 z-50 hidden overflow-y-auto bg-gray-900 bg-opacity-50">
         <div class="flex items-center justify-center min-h-screen p-4">
             <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
                 <h3 class="text-xl font-semibold text-gray-900 mb-4">Printer Configuration</h3>
                 <form id="printer-setup-form" class="space-y-4">
                     <div>
-                        <label for="printer-select" class="block text-sm font-medium text-gray-700">Select Order Printer (Optional):</label>
+                        <label for="printer-select" class="block text-sm font-medium text-gray-700">Select Order Printer:</label>
                         <select id="printer-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                             <option value="">Loading printers...</option>
                         </select>
-                    </div>
-                    
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">PDF Save Path (Fallback for unselected printer):</label>
-                        <div class="mt-1 flex space-x-2">
-                            <input id="pdf-path-input" type="text" readonly class="flex-grow block w-full pl-3 pr-3 py-2 text-sm text-gray-900 border border-gray-300 rounded-md bg-gray-50 cursor-default" placeholder="No path selected">
-                            <button type="button" id="select-pdf-path-button" class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
-                                Change Folder
-                            </button>
-                        </div>
                     </div>
                     <p id="printer-setup-status" class="text-sm text-green-600 hidden"></p>
                     <div class="flex justify-end space-x-3 pt-4">
@@ -96,6 +112,8 @@
         </div>
     </div>
 
+    <!-- Link the single renderer script -->
     <script src="./renderer.js"></script>
 </body>
 </html>
+

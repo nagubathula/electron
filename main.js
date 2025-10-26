@@ -2,15 +2,14 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
+// --- NEW: Import electron-pos-printer ---
+const { PosPrinter } = require("electron-pos-printer");
 
 // --- Configuration Storage Path & Directories ---
 const userDataPath = app.getPath('userData');
 const configFilePath = path.join(userDataPath, 'printer-config.json');
-const defaultBillsDir = path.join(userDataPath, 'bills'); // Default directory for auto-saved PDFs
+const billsDir = path.join(userDataPath, 'bills'); // Directory for auto-saved PDFs
 let selectedPrinterName = null;
-let pdfSavePath = null;
-// NEW: File path for storing the Supabase session
-const sessionFilePath = path.join(userDataPath, 'supabase-session.json'); 
 
 // --- Your Supabase Credentials ---
 const supabaseUrl = 'https://vdkpdyjyupqqciojirkg.supabase.co';
@@ -22,84 +21,18 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 let mainWindow;
 let realtimeChannel = null;
 
-// --- SESSION MANAGEMENT FUNCTIONS (NEW) ---
-
-// Function to save the session to disk
-function saveSession(session) {
-    try {
-        if (session) {
-            fs.writeFileSync(sessionFilePath, JSON.stringify(session), 'utf8');
-            console.log('Supabase session saved.');
-        } else {
-            // Remove session file if the session is null (e.g., on logout)
-            if (fs.existsSync(sessionFilePath)) {
-                fs.unlinkSync(sessionFilePath);
-                console.log('Supabase session deleted.');
-            }
-        }
-    } catch (e) {
-        console.error('Failed to save session:', e);
-    }
-}
-
-// Function to attempt restoring the session from disk
-async function restoreSession() {
-    try {
-        if (fs.existsSync(sessionFilePath)) {
-            const storedSession = JSON.parse(fs.readFileSync(sessionFilePath, 'utf8'));
-            if (storedSession && storedSession.refresh_token) {
-                // Use setSession to restore and validate the session
-                const { data, error } = await supabase.auth.setSession(storedSession);
-                if (error) {
-                    console.error('Failed to restore Supabase session:', error.message);
-                    saveSession(null); // Clear invalid session
-                    return null;
-                }
-                console.log('Supabase session successfully restored.');
-                // IMPORTANT: Listen for auth changes to save any new sessions (e.g., token refresh)
-                setupAuthChangeListener(); 
-                return data.session;
-            }
-        }
-    } catch (e) {
-        console.error('Error restoring session:', e);
-        saveSession(null); // Clear corrupted file
-    }
-    return null;
-}
-
-// Set up a listener to automatically save sessions when they change (e.g., token refresh)
-function setupAuthChangeListener() {
-    supabase.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-            saveSession(session);
-        } else if (event === 'SIGNED_OUT') {
-            saveSession(null);
-        }
-    });
-}
-
-// --- Configuration Loading ---
-
 // Load configuration on startup
 function loadPrinterConfig() {
     try {
         if (fs.existsSync(configFilePath)) {
             const config = JSON.parse(fs.readFileSync(configFilePath, 'utf8'));
             selectedPrinterName = config.printerName || null;
-            pdfSavePath = config.pdfSavePath || defaultBillsDir;
-            console.log(`Loaded printer config: ${selectedPrinterName}, PDF path: ${pdfSavePath}`);
-        } else {
-             pdfSavePath = defaultBillsDir;
-             console.log(`Using default PDF save path: ${pdfSavePath}`);
+            console.log(`Loaded printer config: ${selectedPrinterName}`);
         }
     } catch (e) {
         console.error('Failed to load printer config:', e);
-        pdfSavePath = defaultBillsDir; // Fallback
     }
 }
-
-// --- Window Creation ---
 
 async function createWindow() {
   loadPrinterConfig(); // Load config before creating window
@@ -114,71 +47,90 @@ async function createWindow() {
     },
   });
 
-  mainWindow.loadFile('index.html');
-  // mainWindow.webContents.openDevTools();
+  // --- Check session to decide which page to load ---
+  const { data } = await supabase.auth.getSession();
 
-  // NEW: Attempt to restore session and inform the renderer
-  const session = await restoreSession();
-  if (session) {
-      // If a session is restored, set up the realtime channel immediately
-      setupRealtimeChannel(session.user);
-      // Send the restored user data to the renderer to skip the login screen
-      mainWindow.webContents.on('did-finish-load', () => {
-          mainWindow.webContents.send('supabase:sessionRestored', session.user);
-      });
+  if (data.session) {
+    console.log('Active session found, loading dashboard.');
+    mainWindow.loadFile('index.html'); // Load index.html, renderer will handle view
+    setupRealtimeChannel(); // Setup realtime as we are logged in
+  } else {
+    console.log('No session found, loading login page.');
+    mainWindow.loadFile('index.html'); // Load index.html, renderer will handle view
   }
-}
 
-// Function to set up the Realtime channel (extracted from login handler)
-function setupRealtimeChannel(user) {
-    if (realtimeChannel) {
-        supabase.removeChannel(realtimeChannel);
-    }
-    
-    realtimeChannel = supabase
-        .channel('public:orders')
-        .on(
-            'postgres_changes',
-            { event: 'INSERT', schema: 'public', table: 'orders' },
-            (payload) => {
-                fetchOrderById(payload.new.id).then(newOrderData => {
-                    if (newOrderData) {
-                         mainWindow.webContents.send('supabase:newOrder', newOrderData);
-                    }
-                });
-            }
-        )
-        .subscribe((status, err) => {
-            if (status === 'SUBSCRIBED') {
-                console.log('Successfully connected to realtime channel!');
-            } else if (err) {
-                console.error('Realtime connection error:', err);
-            }
-        });
+  // mainWindow.webContents.openDevTools();
 }
-
 
 app.whenReady().then(() => {
   createWindow();
-  // Call the listener setup once the app is ready for the initial setup
-  setupAuthChangeListener(); 
-  
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('window-all-closed', () => {
+// --- Reusable Function for Realtime ---
+function setupRealtimeChannel() {
   if (realtimeChannel) {
+    console.log('Realtime channel already exists. Unsubscribing before creating new one.');
     supabase.removeChannel(realtimeChannel);
   }
+
+  console.log('Setting up new realtime channel for public:orders');
+  realtimeChannel = supabase
+    .channel('public:orders')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'orders' },
+      (payload) => {
+        // Fetch the full order data with items, as payload.new might be minimal
+        fetchOrderById(payload.new.id).then(newOrderData => {
+          if (newOrderData) {
+            mainWindow.webContents.send('supabase:newOrder', newOrderData);
+          }
+        });
+      }
+    )
+    .subscribe((status, err) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('Successfully connected to realtime channel!');
+      } else if (err) {
+        console.error('Realtime connection error:', err);
+      }
+    });
+}
+
+function stopRealtimeChannel() {
+  if (realtimeChannel) {
+    console.log('Stopping realtime channel.');
+    supabase.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+  }
+}
+
+app.on('window-all-closed', () => {
+  stopRealtimeChannel();
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
 
-// --- Supabase API Handlers (MODIFIED) ---
+// --- NAVIGATION HANDLERS ---
+ipcMain.on('navigate:toDashboard', () => {
+  console.log('Navigating to Dashboard');
+  mainWindow.loadFile('index.html');
+});
+
+ipcMain.on('navigate:toLogin', async () => {
+  console.log('Navigating to Login');
+  await supabase.auth.signOut();
+  stopRealtimeChannel();
+  mainWindow.loadFile('index.html');
+});
+
+
+// --- Supabase API Handlers ---
 
 ipcMain.handle('supabase:login', async (event, email, password) => {
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -191,27 +143,26 @@ ipcMain.handle('supabase:login', async (event, email, password) => {
     return { error: error.message };
   }
 
-  // Session persistence is now handled by the listener, but we save on successful login too
-  saveSession(data.session);
-
-  // --- Login successful, now set up Realtime ---
-  setupRealtimeChannel(data.user);
-
+  setupRealtimeChannel();
   return { user: data.user };
 });
 
-ipcMain.handle('supabase:logout', async () => {
-    const { error } = await supabase.auth.signOut();
-    if (realtimeChannel) {
-        supabase.removeChannel(realtimeChannel);
-    }
-    saveSession(null); // Clear the session file
-    if (error) {
-        console.error('Logout Error:', error.message);
-        return { error: error.message };
-    }
-    return { success: true };
+ipcMain.handle('supabase:getSession', async () => {
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error) {
+    console.error('Error getting session:', error.message);
+    return { session: null };
+  }
+ 
+  if (data.session && !realtimeChannel) {
+      console.log('Session found, re-initializing realtime.');
+      setupRealtimeChannel();
+  }
+
+  return { session: data.session };
 });
+
 
 async function fetchOrderById(orderId) {
     const { data, error } = await supabase
@@ -241,40 +192,58 @@ ipcMain.handle('supabase:getPendingOrders', async () => {
   return { data };
 });
 
-// --- PRINTER HANDLERS (Unchanged) ---
+// --- PRINTER HANDLERS (UPDATED) ---
 
 ipcMain.handle('printer:getPrinters', async () => {
-    return mainWindow.webContents.getPrinters();
+    try {
+        console.log("Attempting to fetch printers via electron-pos-printer...");
+        // --- NEW: Use PosPrinter.getPrinters() ---
+        const printers = await PosPrinter.getPrinters();
+        
+        console.log("--- Found System Printers (pos-printer) ---");
+        if (printers && printers.length > 0) {
+            printers.forEach((printer, index) => {
+                console.log(`  [${index}] Name: ${printer.name}`);
+                console.log(`      DeviceName: ${printer.deviceName}`);
+            });
+        } else {
+            console.log("No printers found by electron-pos-printer.");
+        }
+        console.log("------------------------------------------");
+        return printers;
+
+    } catch (err) {
+        console.error("Critical error in PosPrinter.getPrinters:", err.message);
+        console.log("Falling back to Electron's internal getPrintersAsync()...");
+        try {
+            // --- FALLBACK: Use Electron's native method ---
+            const printers = await mainWindow.webContents.getPrintersAsync();
+            console.log("--- Found System Printers (Electron fallback) ---");
+             if (printers && printers.length > 0) {
+                printers.forEach((printer, index) => {
+                    console.log(`  [${index}] Name: ${printer.name}`);
+                });
+            } else {
+                console.log("No printers found by Electron fallback.");
+            }
+            console.log("-----------------------------------------------");
+            return printers;
+        } catch (e) {
+             console.error("Critical error in getPrintersAsync (fallback):", e);
+             return []; // Return empty array on error
+        }
+    }
 });
 
 ipcMain.handle('printer:getSavedName', async () => {
     return selectedPrinterName;
 });
 
-ipcMain.handle('printer:getPdfSavePath', async () => {
-    return pdfSavePath;
-});
-
-ipcMain.handle('app:selectDirectory', async (event) => {
-    const { dialog } = require('electron');
-    const result = await dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory', 'createDirectory'],
-        title: 'Select Folder to Save Bills',
-        defaultPath: pdfSavePath || defaultBillsDir, 
-    });
-
-    if (result.canceled) {
-        return null;
-    }
-    return result.filePaths[0];
-});
-
-ipcMain.handle('printer:saveSetting', (event, { printerName, path }) => {
+ipcMain.handle('printer:saveSetting', (event, printerName) => {
     selectedPrinterName = printerName;
-    pdfSavePath = path; 
     try {
-        fs.writeFileSync(configFilePath, JSON.stringify({ printerName, pdfSavePath: path }), 'utf8');
-        console.log(`Printer setting saved: ${printerName}, PDF Path: ${path}`);
+        fs.writeFileSync(configFilePath, JSON.stringify({ printerName }), 'utf8');
+        console.log(`Printer setting saved: ${printerName}`);
         return { success: true };
     } catch (e) {
         console.error('Failed to save printer config:', e);
@@ -282,100 +251,41 @@ ipcMain.handle('printer:saveSetting', (event, { printerName, path }) => {
     }
 });
 
-/**
- * Handles printing: either silent print to a configured device, or automatic PDF save.
- */
-ipcMain.handle('printer:silentPrintOrder', async (event, orderHtmlContent, orderId) => {
-    let printWindow = new BrowserWindow({
-        show: false,
-        webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false
-        }
-    });
-
-    const printHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body { font-family: sans-serif; margin: 0; padding: 10px; font-size: 10px; width: 80mm; }
-                .receipt { padding: 5px; }
-                h3 { text-align: center; margin-bottom: 5px; }
-                ul { list-style: none; padding: 0; }
-                li { display: flex; justify-content: space-between; margin-bottom: 2px; }
-                .item-name { font-weight: bold; }
-                .total { margin-top: 10px; padding-top: 5px; border-top: 1px dashed black; font-size: 12px; font-weight: bold; display: flex; justify-content: space-between; }
-            </style>
-        </head>
-        <body>
-            <div class="receipt">${orderHtmlContent}</div>
-        </body>
-        </html>
-    `;
-    printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(printHtml)}`);
-
+// --- UPDATED: This function now receives printData (array) instead of HTML ---
+ipcMain.handle('printer:silentPrintOrder', async (event, printData, orderId) => {
+    
+    // --- CASE 1: No Printer Configured ---
     if (!selectedPrinterName) {
-        console.warn('No printer selected. Falling back to automatic PDF saving.');
-        try {
-            if (!fs.existsSync(pdfSavePath)) {
-                fs.mkdirSync(pdfSavePath, { recursive: true });
-            }
-
-            await new Promise(resolve => printWindow.webContents.on('did-finish-load', resolve));
-            
-            const pdfBuffer = await printWindow.webContents.printToPDF({
-                marginsType: 0,
-                pageSize: { width: 80000, height: 300000 },
-                printBackground: true,
-                landscape: false,
-            });
-
-            const fileName = `order_${orderId}_${Date.now()}.pdf`;
-            const filePath = path.join(pdfSavePath, fileName); 
-            fs.writeFileSync(filePath, pdfBuffer);
-
-            console.log(`PDF successfully saved to ABSOLUTE PATH: ${filePath}`);
-
-            if (printWindow) {
-              printWindow.close();
-              printWindow = null;
-            }
-
-            return { success: true, pdfSaved: true, filePath: filePath };
-
-        } catch (e) {
-            console.error('Automatic PDF save failed:', e);
-            if (printWindow) {
-              printWindow.close();
-              printWindow = null;
-            }
-            return { success: false, error: e.message, pdfSaved: false };
-        }
+        console.warn(`No printer selected. Cannot print order ${orderId}. Please select a printer in settings.`);
+        return { 
+            success: false, 
+            error: `No printer selected. Cannot print order ${orderId}.`, 
+            printed: false 
+        };
     } 
-    else {
-        return new Promise((resolve) => {
-            printWindow.webContents.on('did-finish-load', () => {
-                printWindow.webContents.print({
-                    silent: true, 
-                    deviceName: selectedPrinterName,
-                    margins: { marginType: 'none' }, 
-                    printBackground: true,
-                }, (success, failureReason) => {
-                    if (printWindow) {
-                      printWindow.close();
-                      printWindow = null;
-                    }
+   
+    // --- CASE 2: Silent Print to Configured POS Printer ---
+    const options = {
+        printerName: selectedPrinterName,
+        silent: true,
+        width: '80mm', // Or '58mm'
+        margin: '0 0 0 0',
+        copies: 1,
+        // You may need to specify the driver type for some printers on Windows
+        // e.g., type: 'epson', // 'star' or 'epson'
+    };
 
-                    if (success) {
-                        console.log(`Order printed successfully to ${selectedPrinterName}`);
-                        resolve({ success: true, printed: true });
-                    } else {
-                        console.error(`Print failed: ${failureReason}`);
-                        resolve({ success: false, error: failureReason, printed: false });
-                    }
-                });
-            });
-        });
+    try {
+        console.log(`Printing order ${orderId} to ${selectedPrinterName}...`);
+        // --- NEW: Use PosPrinter.print() ---
+        await PosPrinter.print(printData, options);
+        
+        console.log(`Order printed successfully to ${selectedPrinterName}`);
+        return { success: true, printed: true };
+
+    } catch (err) {
+        console.error(`POS Print failed for order ${orderId}:`, err);
+        return { success: false, error: err.message || err.toString(), printed: false };
     }
 });
+
