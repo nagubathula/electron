@@ -2,7 +2,6 @@
 <html lang="en" class="h-full bg-gray-50">
 <head>
     <meta charset="UTF-8">
-    <!-- Updated CSP -->
     <meta http-equiv="Content-Security-Policy" content="script-src 'self' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline';">
     <title>Order Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -22,7 +21,7 @@
             animation: fadeIn 0.5s ease-out;
         }
 
-        /* --- NEW: Style for disabled print button --- */
+        /* Style for disabled print button */
         .print-button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -31,8 +30,6 @@
 </head>
 <body class="h-full">
 
-    <!-- LOGIN VIEW -->
-    <!-- This view is shown or hidden by renderer.js -->
     <div id="login-view" class="flex min-h-full flex-col justify-center items-center px-6 py-12 lg:px-8" style="display: none;">
         <div class="sm:mx-auto sm:w-full sm:max-w-sm">
             <h2 class="mt-10 text-center text-2xl font-bold leading-9 tracking-tight text-gray-900">Manager Dashboard Login</h2>
@@ -62,8 +59,6 @@
     </div>
 
 
-    <!-- DASHBOARD VIEW -->
-    <!-- This view is shown or hidden by renderer.js -->
     <div id="dashboard-view" class="hidden p-8">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">Pending Orders</h1>
@@ -82,11 +77,9 @@
         </div>
         <p id="printer-status" class="text-sm text-red-600 mb-4 font-medium"></p>
         <div id="orders-list" class="space-y-4">
-            <!-- Orders will be loaded here -->
-        </div>
+            </div>
     </div>
 
-    <!-- PRINTER SETUP MODAL -->
     <div id="printer-setup-modal" class="fixed inset-0 z-50 hidden overflow-y-auto bg-gray-900 bg-opacity-50">
         <div class="flex items-center justify-center min-h-screen p-4">
             <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
@@ -112,8 +105,6 @@
         </div>
     </div>
 
-    <!-- Link the single renderer script -->
     <script src="./renderer.js"></script>
 </body>
 </html>
-

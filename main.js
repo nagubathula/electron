@@ -2,8 +2,6 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
-// --- NEW: Import electron-pos-printer ---
-const { PosPrinter } = require("electron-pos-printer");
 
 // --- Configuration Storage Path & Directories ---
 const userDataPath = app.getPath('userData');
@@ -192,46 +190,26 @@ ipcMain.handle('supabase:getPendingOrders', async () => {
   return { data };
 });
 
-// --- PRINTER HANDLERS (UPDATED) ---
+// --- PRINTER HANDLERS (HTML-based) ---
 
 ipcMain.handle('printer:getPrinters', async () => {
+    // --- Reverted to Electron's built-in printer discovery ---
+    console.log("Attempting to fetch printers via getPrintersAsync()...");
     try {
-        console.log("Attempting to fetch printers via electron-pos-printer...");
-        // --- NEW: Use PosPrinter.getPrinters() ---
-        const printers = await PosPrinter.getPrinters();
-        
-        console.log("--- Found System Printers (pos-printer) ---");
+        const printers = await mainWindow.webContents.getPrintersAsync();
+        console.log("--- Found System Printers ---");
         if (printers && printers.length > 0) {
             printers.forEach((printer, index) => {
                 console.log(`  [${index}] Name: ${printer.name}`);
-                console.log(`      DeviceName: ${printer.deviceName}`);
             });
         } else {
-            console.log("No printers found by electron-pos-printer.");
+            console.log("No printers found.");
         }
-        console.log("------------------------------------------");
+        console.log("-----------------------------");
         return printers;
-
     } catch (err) {
-        console.error("Critical error in PosPrinter.getPrinters:", err.message);
-        console.log("Falling back to Electron's internal getPrintersAsync()...");
-        try {
-            // --- FALLBACK: Use Electron's native method ---
-            const printers = await mainWindow.webContents.getPrintersAsync();
-            console.log("--- Found System Printers (Electron fallback) ---");
-             if (printers && printers.length > 0) {
-                printers.forEach((printer, index) => {
-                    console.log(`  [${index}] Name: ${printer.name}`);
-                });
-            } else {
-                console.log("No printers found by Electron fallback.");
-            }
-            console.log("-----------------------------------------------");
-            return printers;
-        } catch (e) {
-             console.error("Critical error in getPrintersAsync (fallback):", e);
-             return []; // Return empty array on error
-        }
+        console.error("Critical error in getPrintersAsync:", err);
+        return []; // Return empty array on error
     }
 });
 
@@ -251,41 +229,74 @@ ipcMain.handle('printer:saveSetting', (event, printerName) => {
     }
 });
 
-// --- UPDATED: This function now receives printData (array) instead of HTML ---
-ipcMain.handle('printer:silentPrintOrder', async (event, printData, orderId) => {
+// --- This function now handles an HTML string ---
+ipcMain.handle('printer:silentPrintOrder', async (event, orderHtmlContent, orderId) => {
     
-    // --- CASE 1: No Printer Configured ---
+    // 1. Setup hidden window to render content
+    let printWindow = new BrowserWindow({
+        show: false, 
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
+
+    // 2. Load the HTML string from the renderer
+    printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(orderHtmlContent)}`);
+
+    // --- CASE 1: Automatic PDF Save (No Printer Configured) ---
     if (!selectedPrinterName) {
-        console.warn(`No printer selected. Cannot print order ${orderId}. Please select a printer in settings.`);
-        return { 
-            success: false, 
-            error: `No printer selected. Cannot print order ${orderId}.`, 
-            printed: false 
-        };
+        console.warn('No printer selected. Falling back to automatic PDF saving.');
+        try {
+            if (!fs.existsSync(billsDir)) {
+                fs.mkdirSync(billsDir, { recursive: true });
+            }
+            await new Promise(resolve => printWindow.webContents.on('did-finish-load', resolve));
+          
+            const pdfBuffer = await printWindow.webContents.printToPDF({
+                marginsType: 0,
+                pageSize: { width: 80000, height: 297000 }, // 80mm x 297mm
+                printBackground: true,
+                landscape: false,
+            });
+
+            const fileName = `order_${orderId}_${Date.now()}.pdf`;
+            const filePath = path.join(billsDir, fileName);
+            fs.writeFileSync(filePath, pdfBuffer);
+            console.log(`PDF successfully saved to: ${filePath}`);
+
+            if (printWindow) printWindow.close();
+            return { success: true, pdfSaved: true, filePath: filePath };
+
+        } catch (e) {
+            console.error('Automatic PDF save failed:', e);
+            if (printWindow) printWindow.close();
+            return { success: false, error: e.message, pdfSaved: false };
+        }
     } 
    
-    // --- CASE 2: Silent Print to Configured POS Printer ---
-    const options = {
-        printerName: selectedPrinterName,
-        silent: true,
-        width: '80mm', // Or '58mm'
-        margin: '0 0 0 0',
-        copies: 1,
-        // You may need to specify the driver type for some printers on Windows
-        // e.g., type: 'epson', // 'star' or 'epson'
-    };
+    // --- CASE 2: Silent Print to Configured Printer ---
+    else {
+        return new Promise((resolve) => {
+            printWindow.webContents.on('did-finish-load', () => {
+                console.log(`Attempting silent print to ${selectedPrinterName}...`);
+                printWindow.webContents.print({
+                    silent: true, // <-- No dialog box
+                    deviceName: selectedPrinterName,
+                    margins: { marginType: 'none' }, 
+                    printBackground: true,
+                }, (success, failureReason) => {
+                    if (printWindow) printWindow.close();
 
-    try {
-        console.log(`Printing order ${orderId} to ${selectedPrinterName}...`);
-        // --- NEW: Use PosPrinter.print() ---
-        await PosPrinter.print(printData, options);
-        
-        console.log(`Order printed successfully to ${selectedPrinterName}`);
-        return { success: true, printed: true };
-
-    } catch (err) {
-        console.error(`POS Print failed for order ${orderId}:`, err);
-        return { success: false, error: err.message || err.toString(), printed: false };
+                    if (success) {
+                        console.log(`Order printed successfully to ${selectedPrinterName}`);
+                        resolve({ success: true, printed: true });
+                    } else {
+                        console.error(`Print failed: ${failureReason}`);
+                        resolve({ success: false, error: failureReason, printed: false });
+                    }
+                });
+            });
+        });
     }
 });
-

@@ -16,17 +16,14 @@ contextBridge.exposeInMainWorld('api', {
   getSavedPrinterName: () => ipcRenderer.invoke('printer:getSavedName'),
   savePrinterSetting: (printerName) => ipcRenderer.invoke('printer:saveSetting', printerName),
   
-  // --- UPDATED: This now sends `printData` (an array) instead of `orderHtmlContent` (a string) ---
-  silentPrintOrder: (printData, orderId) => ipcRenderer.invoke('printer:silentPrintOrder', printData, orderId),
+  // --- Passes the HTML string to the main process ---
+  silentPrintOrder: (orderHtmlContent, orderId) => ipcRenderer.invoke('printer:silentPrintOrder', orderHtmlContent, orderId),
 
   // --- Event listeners (from Main to Renderer) ---
   onNewOrder: (callback) => {
-    // Remove all previous listeners to avoid duplicates if dashboard is reloaded
     ipcRenderer.removeAllListeners('supabase:newOrder');
-    // Add the new listener
     ipcRenderer.on('supabase:newOrder', (event, order) => {
       callback(order);
     });
   },
 });
-

@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let savedPrinterName = null;
 
-    // --- NEW FUNCTION: Check auth status on page load ---
+    // --- Check auth status on page load ---
     async function checkAuthStatus() {
         console.log('Checking for existing session...');
         const { session } = await window.api.getSession();
@@ -26,95 +26,113 @@ document.addEventListener('DOMContentLoaded', () => {
             await fetchAndRenderOrders();
         } else {
             console.log('No session found, showing login page.');
-            // Show the login view
-            loginView.style.display = 'flex'; // Use flex as per your HTML
+            loginView.style.display = 'flex'; 
             dashboardView.classList.add('hidden');
         }
     }
 
-    // --- NEW: Generate Print Data for electron-pos-printer ---
-    function generatePrintDataForPos(order) {
-        // Define some styles for the receipt
-        const styles = {
-            header: 'font-size:22px;text-align:center;font-weight:bold;',
-            subHeader: 'font-size:26px;text-align:center;font-weight:bold;margin-bottom:10px;',
-            info: 'font-size:16px;',
-            infoBold: 'font-size:16px;font-weight:bold;',
-            item: 'font-size:18px;font-weight:bold;',
-            customization: 'font-size:16px;margin-left:15px;',
-            totalHeader: 'font-size:22px;font-weight:bold;text-align:right;',
-            total: 'font-size:22px;font-weight:bold;text-align:right;',
-        };
+    // --- Function to generate your HTML receipt string ---
+ function generatePrintableOrderHtml(order) {
+    const itemsHtml = order.order_items.map(item => {
+        const singlePrice = (item.total_price / item.quantity).toFixed(2);
+        let customsHtml = '';
 
-        // Build the print data array
-        const data = [
-            { type: 'text', value: 'ORDER TICKET', style: styles.header },
-            { type: 'text', value: `#${order.unique_order_id}`, style: styles.subHeader },
-            { type: 'hr' }, // Horizontal line
-            { type: 'text', value: `Type: ${order.order_type.toUpperCase()}`, style: styles.info },
-            { type: 'text', value: `Time: ${new Date(order.created_at).toLocaleTimeString()}`, style: styles.info },
-            { type: 'text', value: `Cust: ${order.customer_name}`, style: `${styles.info};margin-bottom:10px;` },
-            { type: 'hr' },
-        ];
+        const customs = item.product_config.customizations;
+        if (customs) {
+            if (customs.size) customsHtml += `<div><strong>• Size:</strong> ${customs.size}</div>`;
+            if (customs.selectedSauce) customsHtml += `<div><strong>• Sauce:</strong> ${customs.selectedSauce}</div>`;
+            if (customs.selectedToppings?.length)
+                customsHtml += `<div><strong>• Toppings:</strong> ${customs.selectedToppings.join(', ')}</div>`;
+            if (customs.selectedAddOns?.length)
+                customsHtml += `<div><strong>• Add-ons:</strong> ${customs.selectedAddOns.join(', ')}</div>`;
+        }
 
-        // --- Create table for items ---
-        // This creates a left-aligned column for items and a right-aligned column for prices
-        const tableBody = [];
-        order.order_items.forEach(item => {
-            // Item name and price row
-            tableBody.push([
-                { type: 'text', value: `${item.quantity}x ${item.product_config.name}`, style: styles.item },
-                { type: 'text', value: `₹${item.total_price.toFixed(2)}`, style: `${styles.item};text-align:right;` }
-            ]);
+        return `
+            <div style="border-bottom: 1px dotted #000; padding: 4px 0;">
+                <div style="display: flex; justify-content: space-between;">
+                    <span><strong>${item.product_config.name}</strong></span>
+                    <span>₹${item.total_price.toFixed(2)}</span>
+                </div>
+                <div>${item.quantity} × ₹${singlePrice}</div>
+                ${customsHtml}
+            </div>
+        `;
+    }).join('');
 
-            // Customizations row
-            if (item.product_config.customizations) {
-                const { selectedSauce, selectedToppings, selectedAddOns } = item.product_config.customizations;
-                let customParts = [];
-                if (selectedSauce) customParts.push(`Sauce: ${selectedSauce}`);
-                if (selectedToppings?.length) customParts.push(`Toppings: ${selectedToppings.join(', ')}`);
-                if (selectedAddOns?.length) customParts.push(`Add-ons: ${selectedAddOns.join(', ')}`);
-              
-                if (customParts.length > 0) {
-                    // Add customizations as a new row spanning one column (it will be left-aligned)
-                    tableBody.push([
-                        { type: 'text', value: `(${customParts.join(' | ')})`, style: styles.customization },
-                        { type: 'text', value: '', style: styles.customization } // Empty cell for alignment
-                    ]);
-                }
+    return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Order Receipt - Laurans Food Court</title>
+          <style>
+            * { 
+              margin: 0; 
+              padding: 0; 
+              box-sizing: border-box; 
             }
-        });
+            body {
+              font-family: 'Courier New', monospace;
+              font-size: 14px;
+              width: 70mm;
+              margin: 0;
+              padding: 0;
+            }
+            @page {
+              size: 70mm auto;
+              margin: 0;
+            }
+            .section {
+              padding: 4px 0;
+            }
+            .divider {
+              border-top: 1px dashed #000;
+              margin: 4px 0;
+            }
+            .center {
+              text-align: center;
+            }
+          </style>
+        </head>
+        <body>
+          <div style="width: 70mm; margin: 0 auto;">
+            <div class="center section">
+              <h2 style="font-size:18px;">LAURANS FOOD COURT</h2>
+              <div>Order Receipt</div>
+              <div class="divider"></div>
+            </div>
 
-        // Add the table to the data array
-        data.push({
-            type: 'table',
-            // Define column widths (70% for item name, 30% for price)
-            tableHeader: [{ type: 'text', value: '', width: '70%' }, { type: 'text', value: '', width: '30%' }],
-            // Add the rows
-            tableBody: tableBody.map(row => [row[0], row[1]]),
-        });
+            <div class="section">
+              <div><strong>Order ID:</strong> ${order.unique_order_id}</div>
+              <div><strong>Date:</strong> ${new Date(order.created_at).toLocaleString()}</div>
+              <div><strong>Type:</strong> ${order.order_type.toUpperCase()}</div>
+              <div><strong>Status:</strong> ${order.status.toUpperCase()}</div>
+              <div><strong>Customer:</strong> ${order.customer_name}</div>
+              <div><strong>Email:</strong> ${order.customer_email || 'N/A'}</div>
+            </div>
 
+            <div class="divider"></div>
 
-        // --- Total ---
-        data.push({ type: 'hr' });
-        data.push({
-            type: 'table',
-            // 50/50 split for the "TOTAL" text and the final price
-            tableHeader: [{ type: 'text', value: '', width: '50%' }, { type: 'text', value: '', width: '50%' }],
-            tableBody: [
-                [
-                    { type: 'text', value: 'TOTAL', style: styles.totalHeader },
-                    { type: 'text', value: `₹${order.total_amount.toFixed(2)}`, style: styles.total }
-                ]
-            ]
-        });
+            <div class="section">
+              <div><strong>ORDER ITEMS:</strong></div>
+              ${itemsHtml}
+            </div>
 
-        // --- Feed paper and cut ---
-        data.push({ type: 'feed', lines: 3 }); // Add 3 blank lines for spacing
-        data.push({ type: 'cut' }); // Send paper cut command (if supported)
+            <div class="divider"></div>
 
-        return data;
-    }
+            <div class="section" style="text-align:right;">
+              <strong>TOTAL: ₹${order.total_amount.toFixed(2)}</strong>
+            </div>
+
+            <div class="center section" style="font-size:12px;">
+              <div>Thank you for your order!</div>
+              <div>Visit us again soon!</div>
+            </div>
+          </div>
+        </body>
+        </html>
+    `;
+}
+
 
     // --- Printer Management Functions ---
     async function updatePrinterStatus() {
@@ -125,8 +143,8 @@ document.addEventListener('DOMContentLoaded', () => {
             printerStatusDisplay.textContent = `Auto-print is ENABLED: ${savedPrinterName}`;
             printerStatusDisplay.classList.add('text-green-600');
         } else {
-            // --- UPDATED: Reflect that PDF saving is no longer the default ---
-            printerStatusDisplay.textContent = 'WARNING: Printer not set. New orders will NOT be auto-printed.';
+            // --- PDF warning is back ---
+            printerStatusDisplay.textContent = 'WARNING: Printer not set. New orders will be AUTO-SAVED as PDF.';
             printerStatusDisplay.classList.add('text-red-600');
         }
     }
@@ -134,6 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadPrintersIntoSelect() {
         printerSelect.innerHTML = '<option value="">Loading printers...</option>';
         try {
+            // --- Uses Electron's getPrinters ---
             const printers = await window.api.getPrinters();
             printerSelect.innerHTML = '';
           
@@ -146,7 +165,6 @@ document.addEventListener('DOMContentLoaded', () => {
             printerSelect.innerHTML = '<option value="">-- Select a Printer --</option>';
             printers.forEach(p => {
                 const option = document.createElement('option');
-                // --- UPDATED: Use p.name, as this is the standard identifier ---
                 const printerName = p.name;
                 option.value = printerName;
                 option.textContent = printerName + (p.isDefault ? ' (Default)' : '');
@@ -163,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Event Listeners for Printer Setup ---
+    // --- Event Listeners for Printer Setup (unchanged) ---
     printerSetupButton.addEventListener('click', () => {
         loadPrintersIntoSelect();
         printerSetupModal.classList.remove('hidden');
@@ -196,7 +214,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (success) {
             printerSetupStatus.textContent = `Configuration saved successfully to "${selectedPrinter}"!`;
             printerSetupStatus.classList.add('text-green-600');
-            await updatePrinterStatus(); // Update the main dashboard status
+            await updatePrinterStatus(); 
         } else {
             printerSetupStatus.textContent = `Save failed: ${error}`;
             printerSetupStatus.classList.add('text-red-600');
@@ -204,7 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveButton.disabled = false;
     });
 
-    // --- Handle Login Form Submission ---
+    // --- Handle Login Form Submission (unchanged) ---
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const emailInput = document.getElementById('email');
@@ -234,44 +252,44 @@ document.addEventListener('DOMContentLoaded', () => {
     function showDashboard() {
         loginView.style.display = 'none';
         dashboardView.classList.remove('hidden');
-        updatePrinterStatus(); // Load initial printer status
+        updatePrinterStatus(); 
 
-        // Start listening for new orders pushed from the main process
         window.api.onNewOrder(async (order) => {
             console.log('Realtime Event: New order received!', order);
             const orderElement = createOrderElement(order);
             orderElement.classList.add('new-order-fade-in');
             ordersList.prepend(orderElement);
 
-            // If the "no orders" message is present, remove it
             const noOrdersMessage = ordersList.querySelector('#no-orders-message');
             if(noOrdersMessage) {
                 noOrdersMessage.remove();
             }
 
-            // --- AUTOMATIC POS PRINTING ---
-            // --- UPDATED: Call new functions ---
-            const printData = generatePrintDataForPos(order);
-            // Pass the printData array and orderId to the main process
-            const result = await window.api.silentPrintOrder(printData, order.unique_order_id);
+            // --- Passes HTML to main process ---
+            const printHtml = generatePrintableOrderHtml(order);
+            const result = await window.api.silentPrintOrder(printHtml, order.unique_order_id);
           
-            // Clear previous message classes
             printerStatusDisplay.classList.remove('text-red-600', 'text-green-600', 'text-blue-600');
 
-            // --- UPDATED: Changed status messages, removed PDF logic ---
-            if (result.success && result.printed) {
-                printerStatusDisplay.textContent = `Order #${order.unique_order_id} successfully printed to ${savedPrinterName}!`;
-                printerStatusDisplay.classList.add('text-green-600');
+            // --- Status logic includes PDF fallback ---
+            if (result.success) {
+                if (result.printed) {
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} successfully printed to ${savedPrinterName}!`;
+                    printerStatusDisplay.classList.add('text-green-600');
+                } else if (result.pdfSaved) {
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} saved as PDF (no printer set).`;
+                    printerStatusDisplay.classList.add('text-blue-600');
+                    console.log('PDF saved path:', result.filePath);
+                }
             } else {
-                printerStatusDisplay.textContent = `Print Error for #${order.unique_order_id}: ${result.error}. Check setup.`;
+                printerStatusDisplay.textContent = `Print/Save Error for #${order.unique_order_id}: ${result.error}. Check setup.`;
                 printerStatusDisplay.classList.add('text-red-600');
-                // Revert to general status after a delay
-                setTimeout(updatePrinterStatus, 5000); 
             }
+            setTimeout(updatePrinterStatus, 5000); 
         });
     }
 
-    // --- Fetch and Display Initial Orders ---
+    // --- Fetch and Display Initial Orders (unchanged) ---
     async function fetchAndRenderOrders() {
         ordersList.innerHTML = `<p class="text-center text-gray-500 py-8">Loading orders...</p>`;
         const { data, error } = await window.api.getPendingOrders();
@@ -296,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Helper Function to Create an Order Card Element for Display ---
+    // --- createOrderElement (unchanged) ---
     function createOrderElement(order) {
         const element = document.createElement('div');
         element.className = 'bg-white shadow-md rounded-lg p-4 border-l-4 border-blue-500';
@@ -305,13 +323,10 @@ document.addEventListener('DOMContentLoaded', () => {
             let customizations = '';
             if (item.product_config.customizations) {
                 const { selectedSauce, selectedToppings, selectedAddOns } = item.product_config.customizations;
-                const toppings = selectedToppings?.join(', ');
-                const addOns = selectedAddOns?.join(', ');
-
                 let customParts = [];
                 if (selectedSauce) customParts.push(`Sauce: ${selectedSauce}`);
-                if (toppings) customParts.push(`Toppings: ${toppings}`);
-                if (addOns) customParts.push(`Add-ons: ${addOns}`);
+                if (selectedToppings?.length) customParts.push(`Toppings: ${selectedToppings.join(', ')}`);
+                if (selectedAddOns?.length) customParts.push(`Add-ons: ${selectedAddOns.join(', ')}`);
               
                 if (customParts.length > 0) {
                     customizations = `<div class="text-xs text-gray-500 ml-4">${customParts.join(' | ')}</div>`;
@@ -353,34 +368,35 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `;
 
-        // --- NEW: Add click listener for the manual print button ---
+        // --- Manual Print Button Listener ---
         const printButton = element.querySelector('.print-button');
         printButton.addEventListener('click', async () => {
             console.log(`Manually printing order #${order.unique_order_id}`);
             
-            // Disable button
             printButton.disabled = true;
             printButton.textContent = 'Printing...';
-
-            // Clear previous status
             printerStatusDisplay.classList.remove('text-red-600', 'text-green-600', 'text-blue-600');
 
-            const printData = generatePrintDataForPos(order);
-            const result = await window.api.silentPrintOrder(printData, order.unique_order_id);
+            // --- Passes HTML to main process ---
+            const printHtml = generatePrintableOrderHtml(order);
+            const result = await window.api.silentPrintOrder(printHtml, order.unique_order_id);
 
-            if (result.success && result.printed) {
-                printerStatusDisplay.textContent = `Order #${order.unique_order_id} successfully re-printed to ${savedPrinterName}!`;
-                printerStatusDisplay.classList.add('text-green-600');
+            if (result.success) {
+                if (result.printed) {
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} successfully re-printed to ${savedPrinterName}!`;
+                    printerStatusDisplay.classList.add('text-green-600');
+                } else if (result.pdfSaved) {
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} re-saved as PDF (no printer set).`;
+                    printerStatusDisplay.classList.add('text-blue-600');
+                }
             } else {
                 printerStatusDisplay.textContent = `Re-print Error for #${order.unique_order_id}: ${result.error}. Check setup.`;
                 printerStatusDisplay.classList.add('text-red-600');
             }
 
-            // Re-enable button after a short delay
             setTimeout(() => {
                 printButton.disabled = false;
                 printButton.textContent = 'Print Receipt';
-                // Revert to general status after 5 seconds
                 setTimeout(updatePrinterStatus, 5000);
             }, 1000);
         });
@@ -389,6 +405,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- INITIALIZE THE APP ---
-    checkAuthStatus(); // <-- CALL THE NEW FUNCTION HERE
+    checkAuthStatus();
 });
-
