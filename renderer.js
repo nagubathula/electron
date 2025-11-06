@@ -104,23 +104,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Function to generate your HTML receipt string ---
-    function generatePrintableOrderHtml(order) {
+    // --- Function to generate single copy HTML receipt string ---
+    function generateSingleCopyHtml(order, copyType = '') {
         const token = order.token_number ?? order.tokenNumber ?? order.token_no ?? order.tokenNo ?? order.token ?? null;
 
         const itemsHtml = order.order_items.map(item => {
             const singlePrice = (item.total_price / item.quantity).toFixed(2);
             let customsHtml = '';
-const customs = item.product_config.customizations;
-if (customs && Object.keys(customs).length > 0) {
-    Object.entries(customs).forEach(([key, value]) => {
-        if (value) {
-            const displayValue = Array.isArray(value) ? value.join(', ') : value;
-            customsHtml += `<div><strong>• ${key}:</strong> ${displayValue}</div>`;
-        }
-    });
-}
 
+            const customs = item.product_config.customizations;
+            if (customs && Object.keys(customs).length > 0) {
+                Object.entries(customs).forEach(([key, value]) => {
+                    if (value) {
+                        const displayValue = Array.isArray(value) ? value.join(', ') : value;
+                        customsHtml += `<div><strong>• ${key}:</strong> ${displayValue}</div>`;
+                    }
+                });
+            }
 
             return `
                 <div style="border-bottom: 1px dotted #000; padding: 4px 0;">
@@ -133,6 +133,56 @@ if (customs && Object.keys(customs).length > 0) {
                 </div>
             `;
         }).join('');
+
+        const copyLabel = copyType ? `<div style="font-size:16px; font-weight:bold; border:2px solid #000; padding:4px; margin:4px 0;">${copyType} COPY</div>` : '';
+
+        return `
+            <div style="width: 70mm; margin: 0 auto; page-break-after: always;">
+                <div class="center section">
+                    <h2 style="font-size:18px;">LAURANS FOOD COURT</h2>
+                    <div>Order Receipt</div>
+                    ${copyLabel}
+                    ${token ? `<div class="token-badge">TOKEN #${token}</div>` : ''}
+                    <div class="divider"></div>
+                </div>
+
+                <div class="section">
+                    <div style="display:flex; justify-content:space-between;">
+                        <div><strong>Order ID:</strong> ${order.unique_order_id}</div>
+                        ${token ? `<div><strong>Token:</strong> #${token}</div>` : ''}
+                    </div>
+                    <div><strong>Date:</strong> ${new Date(order.created_at).toLocaleString()}</div>
+                    <div><strong>Type:</strong> ${order.order_type.toUpperCase()}</div>
+                    <div><strong>Status:</strong> ${order.status.toUpperCase()}</div>
+                    <div><strong>Customer:</strong> ${order.customer_name}</div>
+                    <div><strong>Email:</strong> ${order.customer_email || 'N/A'}</div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="section">
+                    <div><strong>ORDER ITEMS:</strong></div>
+                    ${itemsHtml}
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="section" style="text-align:right;">
+                    <strong>TOTAL: ₹${order.total_amount.toFixed(2)}</strong>
+                </div>
+
+                <div class="center section" style="font-size:12px;">
+                    <div>Thank you for your order!</div>
+                    <div>Visit us again soon!</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // --- Function to generate BOTH copies in one HTML document ---
+    function generateBothCopiesHtml(order) {
+        const customerCopy = generateSingleCopyHtml(order, 'CUSTOMER');
+        const restaurantCopy = generateSingleCopyHtml(order, 'RESTAURANT');
 
         return `
             <!DOCTYPE html>
@@ -148,7 +198,10 @@ if (customs && Object.keys(customs).length > 0) {
                         margin: 0;
                         padding: 0;
                     }
-                    @page { size: 70mm auto; margin: 0; }
+                    @page { 
+                        size: 70mm auto; 
+                        margin: 0; 
+                    }
                     .section { padding: 4px 0; }
                     .divider { border-top: 1px dashed #000; margin: 4px 0; }
                     .center { text-align: center; }
@@ -160,47 +213,15 @@ if (customs && Object.keys(customs).length > 0) {
                         border: 2px solid #000;
                         margin: 4px 0;
                     }
+                    .page-break { 
+                        page-break-after: always; 
+                        break-after: page;
+                    }
                 </style>
             </head>
             <body>
-                <div style="width: 70mm; margin: 0 auto;">
-                    <div class="center section">
-                        <h2 style="font-size:18px;">LAURANS FOOD COURT</h2>
-                        <div>Order Receipt</div>
-                        ${token ? `<div class="token-badge">TOKEN #${token}</div>` : ''}
-                        <div class="divider"></div>
-                    </div>
-
-                    <div class="section">
-                        <div style="display:flex; justify-content:space-between;">
-                            <div><strong>Order ID:</strong> ${order.unique_order_id}</div>
-                            ${token ? `<div><strong>Token:</strong> #${token}</div>` : ''}
-                        </div>
-                        <div><strong>Date:</strong> ${new Date(order.created_at).toLocaleString()}</div>
-                        <div><strong>Type:</strong> ${order.order_type.toUpperCase()}</div>
-                        <div><strong>Status:</strong> ${order.status.toUpperCase()}</div>
-                        <div><strong>Customer:</strong> ${order.customer_name}</div>
-                        <div><strong>Email:</strong> ${order.customer_email || 'N/A'}</div>
-                    </div>
-
-                    <div class="divider"></div>
-
-                    <div class="section">
-                        <div><strong>ORDER ITEMS:</strong></div>
-                        ${itemsHtml}
-                    </div>
-
-                    <div class="divider"></div>
-
-                    <div class="section" style="text-align:right;">
-                        <strong>TOTAL: ₹${order.total_amount.toFixed(2)}</strong>
-                    </div>
-
-                    <div class="center section" style="font-size:12px;">
-                        <div>Thank you for your order!</div>
-                        <div>Visit us again soon!</div>
-                    </div>
-                </div>
+                ${customerCopy}
+                ${restaurantCopy}
             </body>
             </html>
         `;
@@ -335,17 +356,18 @@ if (customs && Object.keys(customs).length > 0) {
                 noOrdersMessage.remove();
             }
 
-            const printHtml = generatePrintableOrderHtml(order);
+            // Print BOTH copies (Customer + Restaurant)
+            const printHtml = generateBothCopiesHtml(order);
             const result = await window.api.silentPrintOrder(printHtml, order.unique_order_id);
          
             printerStatusDisplay.classList.remove('text-red-600', 'text-green-600', 'text-blue-600');
 
             if (result.success) {
                 if (result.printed) {
-                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${order.token_number}) successfully printed!`;
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${order.token_number}) - 2 copies printed!`;
                     printerStatusDisplay.classList.add('text-green-600');
                 } else if (result.pdfSaved) {
-                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${order.token_number}) saved as PDF.`;
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${order.token_number}) - 2 copies saved as PDF.`;
                     printerStatusDisplay.classList.add('text-blue-600');
                     console.log('PDF saved path:', result.filePath);
                 }
@@ -382,7 +404,7 @@ if (customs && Object.keys(customs).length > 0) {
         });
     }
 
-    // --- createOrderElement with Token Number Display ---
+    // --- createOrderElement with Token Number Display and Fixed Customizations ---
     function createOrderElement(order) {
         const element = document.createElement('div');
         element.className = 'bg-white shadow-md rounded-lg p-4 border-l-4 border-blue-500';
@@ -391,22 +413,21 @@ if (customs && Object.keys(customs).length > 0) {
 
         const itemsHtml = order.order_items.map(item => {
             let customizations = '';
-           if (item.product_config.customizations) {
-    const customs = item.product_config.customizations;
-    let customParts = [];
-    
-    Object.entries(customs).forEach(([key, value]) => {
-        if (value) {
-            const displayValue = Array.isArray(value) ? value.join(', ') : value;
-            customParts.push(`${key}: ${displayValue}`);
-        }
-    });
-    
-    if (customParts.length > 0) {
-        customizations = `<div class="text-xs text-gray-500 ml-4">${customParts.join(' | ')}</div>`;
-    }
-}
-
+            if (item.product_config.customizations) {
+                const customs = item.product_config.customizations;
+                let customParts = [];
+                
+                Object.entries(customs).forEach(([key, value]) => {
+                    if (value) {
+                        const displayValue = Array.isArray(value) ? value.join(', ') : value;
+                        customParts.push(`${key}: ${displayValue}`);
+                    }
+                });
+             
+                if (customParts.length > 0) {
+                    customizations = `<div class="text-xs text-gray-500 ml-4">${customParts.join(' | ')}</div>`;
+                }
+            }
             return `
                 <li class="flex justify-between py-1">
                     <div>
@@ -439,7 +460,7 @@ if (customs && Object.keys(customs).length > 0) {
                     ${new Date(order.created_at).toLocaleString()}
                 </span>
                 <button data-order-id="${order.unique_order_id}" class="print-button px-3 py-1.5 text-sm font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">
-                    Print Receipt
+                    Print Receipt (2 copies)
                 </button>
             </div>
         `;
@@ -447,21 +468,22 @@ if (customs && Object.keys(customs).length > 0) {
         // --- Manual Print Button Listener ---
         const printButton = element.querySelector('.print-button');
         printButton.addEventListener('click', async () => {
-            console.log(`Manually printing order #${order.unique_order_id}`);
+            console.log(`Manually printing order #${order.unique_order_id} (2 copies)`);
            
             printButton.disabled = true;
             printButton.textContent = 'Printing...';
             printerStatusDisplay.classList.remove('text-red-600', 'text-green-600', 'text-blue-600');
 
-            const printHtml = generatePrintableOrderHtml(order);
+            // Print BOTH copies
+            const printHtml = generateBothCopiesHtml(order);
             const result = await window.api.silentPrintOrder(printHtml, order.unique_order_id);
 
             if (result.success) {
                 if (result.printed) {
-                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${token}) successfully re-printed!`;
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${token}) - 2 copies re-printed!`;
                     printerStatusDisplay.classList.add('text-green-600');
                 } else if (result.pdfSaved) {
-                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${token}) re-saved as PDF.`;
+                    printerStatusDisplay.textContent = `Order #${order.unique_order_id} (Token #${token}) - 2 copies re-saved as PDF.`;
                     printerStatusDisplay.classList.add('text-blue-600');
                 }
             } else {
@@ -471,7 +493,7 @@ if (customs && Object.keys(customs).length > 0) {
 
             setTimeout(() => {
                 printButton.disabled = false;
-                printButton.textContent = 'Print Receipt';
+                printButton.textContent = 'Print Receipt (2 copies)';
                 setTimeout(updatePrinterStatus, 5000);
             }, 1000);
         });
